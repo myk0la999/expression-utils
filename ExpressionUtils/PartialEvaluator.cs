@@ -20,29 +20,9 @@ namespace MiaPlaza.ExpressionUtils {
 		/// </summary>
 		/// <param name="expression">The root of the expression tree.</param>
 		/// <returns>A new tree with sub-trees evaluated and replaced.</returns>
-		public static Expression PartialEval(Expression expression, IExpressionEvaluator evaluator) 
-			=> PartialEval(expression, evaluator, canBeEvaluated);
-		
-		/// <summary>
-		/// Performs evaluation & replacement of independent sub-trees in the body of <see cref="LambdaExpression"/>.
-		/// </summary>
-		public static LambdaExpression PartialEval(LambdaExpression expression, IExpressionEvaluator evaluator)
-			=> (LambdaExpression)PartialEval(expression, evaluator, canBeEvaluated);
-
-		/// <summary>
-		/// Performs evaluation & replacement of independent sub-trees in the body
-		/// of an typed <see cref="LambdaExpression"/>.
-		/// </summary>
-		/// <param name="expFunc">The lambda expression whichs body to
-		/// partially evaluate.</param>
-		/// <returns>A new typed <see cref="LambdaExpression"/> with sub-trees in the 
-		/// body evaluated and replaced.</returns>
-		/// <remarks>
-		/// Call to <see cref="Expression{TDelegate}.Update(Expression, IEnumerable{ParameterExpression})"/> is very important here.
-		/// It allows expression to keep its original type, even if its body was replaced with <see cref="ExceptionClosure"/> call.
-		/// </remarks>
-		public static Expression<D> PartialEval<D>(Expression<D> expFunc, IExpressionEvaluator evaluator) 
-			=> expFunc.Update(PartialEval(expFunc.Body, evaluator), expFunc.Parameters);
+		public static TExpression PartialEval<TExpression>(TExpression expression, IExpressionEvaluator evaluator) where TExpression : Expression {
+			return (TExpression)PartialEval(expression, evaluator, canBeEvaluated);
+		}
 
 		private static bool canBeEvaluated(Expression expression) {
 			if (expression.NodeType == ExpressionType.Parameter) {
@@ -72,22 +52,47 @@ namespace MiaPlaza.ExpressionUtils {
 				return this.Visit(exp);
 			}
 
+			private int depth = -1;
+
 			public override Expression Visit(Expression exp) {
 				if (exp == null) {
 					return null;
 				}
-				if (candidates.Contains(exp)) {
+
+				// In case we visit lambda expression, we want to return lambda expression as a result of visit,
+				// so we don't want to replace root lambda node with constant expression node, so we don't do anything here.
+				if (candidates.Contains(exp) && !(depth == -1 && exp is LambdaExpression)) {
 					if (exp is ConstantExpression) {
 						return exp;
 					}
 
-					try {
-						return Expression.Constant(evaluator.Evaluate(exp), exp.Type);
-					} catch (Exception exception) {
-						return ExceptionClosure.MakeExceptionClosureCall(exception, exp.Type);
-					}
+					return evaluate(exp);
 				}
-				return base.Visit(exp);
+
+				depth++;
+				var newNode = base.Visit(exp);
+				depth--;
+				return newNode;
+			}
+
+			protected override Expression VisitLambda<T>(Expression<T> node) {
+				// This is root lambda node that we want to evaluate. Since we want to preserve type
+				// of input expression, we will update the body, but still keep the lambda.
+				if (candidates.Contains(node) && depth == 0) {
+					var constant = evaluate(node.Body);
+					return node.Update(constant, node.Parameters);
+				}
+
+				return base.VisitLambda(node);
+			}
+
+			private Expression evaluate(Expression exp) {
+				try {
+					return Expression.Constant(evaluator.Evaluate(exp), exp.Type);
+				}
+				catch (Exception exception) {
+					return ExceptionClosure.MakeExceptionClosureCall(exception, exp.Type);
+				}
 			}
 		}
 
