@@ -47,7 +47,10 @@ namespace MiaPlaza.ExpressionUtils.Evaluating {
 
 				compiled = ParameterListRewriter.RewriteLambda(extractionResult.ConstantfreeExpression, extractionResult.Parameters.Concat(expressionParts.Parameters).ToList()).Compile();
 
-				delegates.TryAdd(expression, compiled);
+				// Replace any captured variables with default value, as we will store this as a cache key, so we want to avoid memory leak caused by storage of captured objects.
+				var cacheKey = ConstantValueReplacer.ReplaceConstants(expression, (constant) => Expression.Constant(getDefaultValue(constant.Type), constant.Type));
+
+				delegates.TryAdd(cacheKey, compiled);
 				constants = extractionResult.ExtractedConstants;
 			}
 
@@ -58,6 +61,14 @@ namespace MiaPlaza.ExpressionUtils.Evaluating {
 		public DELEGATE EvaluateTypedLambda<DELEGATE>(Expression<DELEGATE> expression) where DELEGATE : class => CachedCompileTypedLambda(expression);
 		public DELEGATE CachedCompileTypedLambda<DELEGATE>(Expression<DELEGATE> expression) where DELEGATE : class => CachedCompileExpression(expression).WrapDelegate<DELEGATE>();
 		
+		private static object getDefaultValue(Type t) {
+			if (t.IsValueType) {
+				return Activator.CreateInstance(t);
+			}
+
+			return null;
+		}
+
 		/// <remarks>
 		/// Use for testing only.
 		/// </remarks>
